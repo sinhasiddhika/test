@@ -7,6 +7,7 @@ from sklearn.cluster import KMeans
 import scipy.ndimage as ndi
 from skimage import morphology, filters, restoration
 import random
+import colorsys
 
 # Set page config
 st.set_page_config(page_title="AI Pixel Art to Realistic Image Converter", layout="wide")
@@ -37,6 +38,68 @@ if uploaded_file is not None:
         # Get original dimensions
         orig_width, orig_height = pixel_image.size
         
+        # Extract and display original colors
+        def extract_dominant_colors(img, n_colors=8):
+            """Extract dominant colors from the image"""
+            img_array = np.array(img)
+            pixels = img_array.reshape(-1, 3)
+            
+            # Remove duplicate colors
+            unique_pixels = np.unique(pixels, axis=0)
+            
+            if len(unique_pixels) <= n_colors:
+                return unique_pixels
+            
+            kmeans = KMeans(n_clusters=n_colors, random_state=42, n_init=10)
+            kmeans.fit(pixels)
+            return kmeans.cluster_centers_.astype(int)
+        
+        original_colors = extract_dominant_colors(pixel_image)
+        
+        # Color Palette Section
+        st.subheader("🎨 Color Palette Management")
+        
+        palette_tab1, palette_tab2 = st.tabs(["Original Colors", "Custom Palette"])
+        
+        with palette_tab1:
+            st.write("Detected colors from your pixel art:")
+            cols = st.columns(min(8, len(original_colors)))
+            detected_colors = []
+            
+            for i, color in enumerate(original_colors):
+                with cols[i % len(cols)]:
+                    color_hex = "#{:02x}{:02x}{:02x}".format(int(color[0]), int(color[1]), int(color[2]))
+                    st.color_picker(f"Color {i+1}", color_hex, key=f"detected_{i}", disabled=True)
+                    detected_colors.append(color)
+        
+        with palette_tab2:
+            st.write("Create your custom color palette:")
+            use_custom_palette = st.checkbox("Use Custom Palette", value=False)
+            
+            if use_custom_palette:
+                num_colors = st.slider("Number of colors", 2, 12, len(original_colors))
+                custom_colors = []
+                
+                cols = st.columns(4)
+                for i in range(num_colors):
+                    with cols[i % 4]:
+                        default_color = "#{:02x}{:02x}{:02x}".format(
+                            int(original_colors[i % len(original_colors)][0]),
+                            int(original_colors[i % len(original_colors)][1]),
+                            int(original_colors[i % len(original_colors)][2])
+                        )
+                        color_hex = st.color_picker(f"Custom {i+1}", default_color, key=f"custom_{i}")
+                        # Convert hex to RGB
+                        rgb = tuple(int(color_hex[j:j+2], 16) for j in (1, 3, 5))
+                        custom_colors.append(rgb)
+                
+                # Palette preview
+                st.write("Palette Preview:")
+                palette_preview = np.zeros((50, len(custom_colors) * 50, 3), dtype=np.uint8)
+                for i, color in enumerate(custom_colors):
+                    palette_preview[:, i*50:(i+1)*50] = color
+                st.image(palette_preview, width=400)
+        
         # Enhancement parameters
         st.subheader("🎛 Advanced AI Enhancement Controls")
         
@@ -54,23 +117,23 @@ if uploaded_file is not None:
                 texture_intensity = st.slider(
                     "Texture Intensity",
                     min_value=0.1,
-                    max_value=3.0,
-                    value=1.5,
+                    max_value=2.0,
+                    value=0.8,  # Reduced default to minimize artifacts
                     step=0.1,
                     help="How pronounced the texture should be"
                 )
             
             with col_mat2:
                 pattern_recognition = st.checkbox("🔍 Smart Pattern Recognition", value=True, help="AI analyzes patterns to enhance appropriately")
-                color_depth_enhancement = st.checkbox("🌈 Advanced Color Depth", value=True, help="Creates realistic color variations")
-                lighting_simulation = st.checkbox("💡 3D Lighting Simulation", value=True, help="Simulates realistic lighting and shadows")
+                color_preservation = st.checkbox("🎯 Strict Color Preservation", value=True, help="Maintains original color palette exactly")
+                artifact_reduction = st.checkbox("🔧 Artifact Reduction", value=True, help="Reduces bubbles and unwanted artifacts")
         
         # Output Size Configuration
         with st.expander("📐 Output Size Configuration", expanded=True):
             upscale_factor = st.selectbox(
                 "Upscale Factor",
                 [2, 4, 6, 8, 10, 12, 16, 20],
-                index=3,  # Default to 8x
+                index=2,  # Default to 6x for better quality
                 help="Multiply original dimensions by this factor"
             )
             target_width = orig_width * upscale_factor
@@ -78,7 +141,7 @@ if uploaded_file is not None:
             st.info(f"Output Size: {target_width} × {target_height} pixels")
         
         # Advanced AI Options
-        with st.expander("🤖 Advanced AI Enhancement", expanded=True):
+        with st.expander("🤖 Advanced AI Enhancement", expanded=False):
             col_ai1, col_ai2 = st.columns(2)
             
             with col_ai1:
@@ -86,339 +149,295 @@ if uploaded_file is not None:
                 
                 super_resolution_mode = st.selectbox(
                     "Super Resolution Method",
-                    ["Neural-Inspired", "Multi-Scale", "Edge-Aware", "Texture-Preserving"],
+                    ["Color-Preserving", "Edge-Aware", "Pattern-Aware", "Texture-Preserving"],
                     help="Different AI-inspired upscaling approaches"
                 )
                 
-                denoising_strength = st.slider("Denoising Strength", 0.0, 2.0, 1.0, 0.1)
-                detail_enhancement = st.slider("Detail Enhancement", 0.0, 3.0, 1.5, 0.1)
+                denoising_strength = st.slider("Denoising Strength", 0.0, 1.0, 0.3, 0.1)
+                edge_preservation = st.slider("Edge Preservation", 0.0, 2.0, 1.5, 0.1)
             
             with col_ai2:
                 st.markdown("🎯 Realism Controls:")
                 
-                surface_roughness = st.slider("Surface Roughness", 0.0, 2.0, 1.0, 0.1)
-                depth_perception = st.slider("3D Depth Effect", 0.0, 2.0, 1.2, 0.1)
-                color_variation = st.slider("Natural Color Variation", 0.0, 2.0, 1.3, 0.1)
-                ambient_occlusion = st.checkbox("Ambient Occlusion", value=True, help="Adds realistic shadows in crevices")
+                surface_roughness = st.slider("Surface Roughness", 0.0, 1.0, 0.4, 0.1)
+                depth_perception = st.slider("3D Depth Effect", 0.0, 1.5, 0.6, 0.1)
+                lighting_intensity = st.slider("Lighting Intensity", 0.0, 2.0, 0.8, 0.1)
         
-        def analyze_pixel_patterns(img_array):
-            """Analyze the pixel art to understand its structure and patterns"""
-            # Convert to grayscale for pattern analysis
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+        def quantize_to_palette(img_array, palette):
+            """Quantize image colors to match the specified palette"""
+            h, w, c = img_array.shape
+            img_flat = img_array.reshape(-1, 3)
             
-            # Detect edges to understand structure
-            edges = cv2.Canny(gray, 50, 150)
+            # Find closest color in palette for each pixel
+            quantized = np.zeros_like(img_flat)
             
-            # Find dominant colors using k-means clustering
-            pixels = img_array.reshape(-1, 3)
-            n_colors = min(8, len(np.unique(pixels.view(np.void), axis=0)))
-            if n_colors > 1:
-                kmeans = KMeans(n_clusters=n_colors, random_state=42, n_init=10)
-                kmeans.fit(pixels)
-                dominant_colors = kmeans.cluster_centers_.astype(int)
-            else:
-                dominant_colors = [np.mean(pixels, axis=0).astype(int)]
+            for i, pixel in enumerate(img_flat):
+                distances = np.sum((palette - pixel) ** 2, axis=1)
+                closest_idx = np.argmin(distances)
+                quantized[i] = palette[closest_idx]
             
-            # Analyze pattern repetition
-            h, w = gray.shape
-            tile_size = min(16, min(h, w) // 4)
-            
-            patterns = []
-            if tile_size > 2:
-                for i in range(0, h - tile_size, tile_size//2):
-                    for j in range(0, w - tile_size, tile_size//2):
-                        tile = gray[i:i+tile_size, j:j+tile_size]
-                        if tile.shape == (tile_size, tile_size):
-                            patterns.append(tile)
-            
-            return {
-                'edges': edges,
-                'dominant_colors': dominant_colors,
-                'patterns': patterns,
-                'tile_size': tile_size
-            }
+            return quantized.reshape(h, w, c)
         
-        def create_material_texture(material_type, size, intensity=1.0):
-            """Generate material-specific texture patterns"""
+        def create_clean_material_texture(material_type, size, intensity=1.0, reduce_artifacts=True):
+            """Generate clean material-specific texture patterns without artifacts"""
             h, w = size
             
             if material_type == "Fabric/Carpet":
-                # Generate woven texture
+                # Create a more controlled fabric texture
                 texture = np.zeros((h, w), dtype=np.float32)
                 
-                # Create thread-like patterns
-                thread_spacing = max(2, int(4 * intensity))
+                # Controlled thread pattern
+                thread_spacing = max(3, int(6 * intensity))
+                thread_thickness = max(1, int(2 * intensity))
                 
-                # Horizontal threads
+                # Horizontal threads with controlled variation
                 for y in range(0, h, thread_spacing):
-                    thickness = max(1, int(2 * intensity))
-                    for t in range(thickness):
+                    for t in range(thread_thickness):
                         if y + t < h:
-                            # Add slight wave to threads
-                            wave = np.sin(np.arange(w) * 0.1) * 0.5
-                            for x in range(w):
-                                ny = int(y + t + wave[x])
-                                if 0 <= ny < h:
-                                    texture[ny, x] += 0.3
+                            texture[y + t, :] += 0.15 * intensity
                 
-                # Vertical threads
+                # Vertical threads with controlled variation
                 for x in range(0, w, thread_spacing):
-                    thickness = max(1, int(2 * intensity))
-                    for t in range(thickness):
+                    for t in range(thread_thickness):
                         if x + t < w:
-                            # Add slight wave to threads
-                            wave = np.sin(np.arange(h) * 0.1) * 0.5
-                            for y in range(h):
-                                nx = int(x + t + wave[y])
-                                if 0 <= nx < w:
-                                    texture[y, nx] += 0.3
+                            texture[:, x + t] += 0.15 * intensity
                 
-                # Add fabric grain noise
-                noise = np.random.normal(0, 0.1 * intensity, (h, w))
-                texture += noise
+                # Add subtle fiber texture without noise
+                if not reduce_artifacts:
+                    fiber_noise = np.random.normal(0, 0.05 * intensity, (h, w))
+                    texture += fiber_noise
                 
             elif material_type == "Wood":
-                # Generate wood grain
+                # Cleaner wood grain
                 texture = np.zeros((h, w), dtype=np.float32)
                 
-                # Wood rings
-                center_x, center_y = w // 2, h // 2
+                # Controlled wood grain pattern
                 for y in range(h):
-                    for x in range(w):
-                        dist = np.sqrt((x - center_x)*2 + (y - center_y)*2)
-                        ring_val = np.sin(dist * 0.1 * intensity) * 0.2
-                        texture[y, x] = ring_val
+                    grain_value = np.sin(y * 0.1 * intensity) * 0.1
+                    texture[y, :] = grain_value
                 
-                # Wood grain lines
-                grain_noise = np.random.normal(0, 0.05 * intensity, (h, w))
-                texture += grain_noise
+                # Add wood ring pattern
+                center_y = h // 2
+                for y in range(h):
+                    ring_dist = abs(y - center_y)
+                    ring_value = np.sin(ring_dist * 0.05 * intensity) * 0.05
+                    texture[y, :] += ring_value
                 
             elif material_type == "Stone/Marble":
-                # Generate marble-like veining
-                texture = np.random.normal(0, 0.1 * intensity, (h, w))
+                # Controlled marble texture
+                texture = np.random.normal(0, 0.03 * intensity, (h, w))
                 
-                # Add veins using Perlin-like noise
-                x_coords = np.arange(w) / w * 4 * intensity
-                y_coords = np.arange(h) / h * 4 * intensity
+                # Add controlled veining
+                x_coords = np.arange(w) / w * 2 * intensity
+                y_coords = np.arange(h) / h * 2 * intensity
                 X, Y = np.meshgrid(x_coords, y_coords)
                 
-                veins = np.sin(X * 3 + Y * 2) * np.cos(Y * 3 - X * 1.5) * 0.3
+                veins = np.sin(X * 2 + Y * 1.5) * 0.1 * intensity
                 texture += veins
                 
             else:
-                # Generic texture
-                texture = np.random.normal(0, 0.1 * intensity, (h, w))
+                # Generic clean texture
+                if reduce_artifacts:
+                    texture = np.random.normal(0, 0.02 * intensity, (h, w))
+                else:
+                    texture = np.random.normal(0, 0.05 * intensity, (h, w))
+            
+            # Smooth the texture to reduce artifacts
+            if reduce_artifacts:
+                texture = cv2.GaussianBlur(texture, (3, 3), 1.0)
             
             # Normalize texture
-            texture = (texture - texture.min()) / (texture.max() - texture.min() + 1e-8)
+            if texture.max() > texture.min():
+                texture = (texture - texture.min()) / (texture.max() - texture.min())
+            else:
+                texture = np.zeros_like(texture)
+            
             return texture
         
-        def apply_neural_inspired_upscaling(img_array, target_size, method="Neural-Inspired"):
-            """Advanced upscaling using neural-inspired techniques"""
+        def apply_color_preserving_upscaling(img_array, target_size, palette, method="Color-Preserving"):
+            """Advanced upscaling while preserving the original color palette"""
             target_h, target_w = target_size
             
-            if method == "Neural-Inspired":
-                # Multi-step upscaling with edge preservation
-                current = img_array.copy().astype(np.float32)
+            if method == "Color-Preserving":
+                # Upscale using nearest neighbor to preserve colors initially
+                upscaled_nn = cv2.resize(img_array, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
                 
-                # Progressive upscaling
-                steps = min(4, int(np.log2(max(target_h / img_array.shape[0], target_w / img_array.shape[1]))))
+                # Apply slight smoothing only at edges
+                upscaled_smooth = cv2.resize(img_array, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
                 
-                for step in range(steps):
-                    # Calculate intermediate size
-                    scale = 2 ** (step + 1)
-                    inter_h = min(target_h, int(img_array.shape[0] * scale))
-                    inter_w = min(target_w, int(img_array.shape[1] * scale))
-                    
-                    # Upscale current image
-                    current = cv2.resize(current, (inter_w, inter_h), interpolation=cv2.INTER_CUBIC)
-                    
-                    # Apply edge-preserving smoothing
-                    if step < steps - 1:  # Don't smooth the final step
-                        current = cv2.bilateralFilter(current.astype(np.uint8), 9, 75, 75).astype(np.float32)
+                # Detect edges in original image
+                gray_orig = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                edges_orig = cv2.Canny(gray_orig, 50, 150)
+                edges_upscaled = cv2.resize(edges_orig, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
                 
-                # Final resize to exact target size
-                if current.shape[:2] != (target_h, target_w):
-                    current = cv2.resize(current, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+                # Blend: use smooth version only near edges
+                kernel = np.ones((3, 3), np.uint8)
+                edge_mask = cv2.dilate(edges_upscaled, kernel, iterations=1) / 255.0
+                edge_mask = np.stack([edge_mask] * 3, axis=2)
                 
-                return current.astype(np.uint8)
+                # Combine nearest neighbor (for color preservation) with smooth (for edges)
+                blended = upscaled_nn * (1 - edge_mask * 0.3) + upscaled_smooth * (edge_mask * 0.3)
+                
+                # Quantize back to original palette
+                result = quantize_to_palette(blended.astype(np.uint8), palette)
+                
+                return result.astype(np.uint8)
             
-            elif method == "Edge-Aware":
-                # Detect edges and preserve them during upscaling
-                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-                edges = cv2.Canny(gray, 50, 150)
+            elif method == "Pattern-Aware":
+                # Analyze pattern structure first
+                upscaled = cv2.resize(img_array, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
                 
-                # Upscale image and edges separately
-                upscaled = cv2.resize(img_array, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
-                upscaled_edges = cv2.resize(edges, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+                # Apply bilateral filter to smooth while preserving edges
+                smoothed = cv2.bilateralFilter(upscaled, 9, 75, 75)
                 
-                # Enhance edges in the upscaled image
-                upscaled_gray = cv2.cvtColor(upscaled, cv2.COLOR_RGB2GRAY)
-                enhanced_edges = cv2.addWeighted(upscaled_gray, 0.7, upscaled_edges.astype(np.uint8), 0.3, 0)
+                # Quantize to palette
+                result = quantize_to_palette(smoothed, palette)
                 
-                # Merge back with color
-                for i in range(3):
-                    upscaled[:, :, i] = cv2.addWeighted(upscaled[:, :, i], 0.8, enhanced_edges, 0.2, 0)
-                
-                return upscaled
+                return result.astype(np.uint8)
             
             else:
-                # Standard upscaling
-                return cv2.resize(img_array, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+                # Standard upscaling with palette quantization
+                upscaled = cv2.resize(img_array, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+                result = quantize_to_palette(upscaled, palette)
+                return result.astype(np.uint8)
         
-        def apply_material_lighting(img_array, material_type, depth_map, intensity=1.0):
-            """Apply material-specific lighting and shading"""
+        def apply_controlled_lighting(img_array, intensity=1.0, preserve_colors=True):
+            """Apply subtle lighting without destroying the color palette"""
+            if intensity == 0:
+                return img_array
+            
             h, w = img_array.shape[:2]
             
-            # Create light source (top-left)
-            light_x, light_y = w * 0.3, h * 0.3
+            # Create a gentle lighting gradient
+            y_coords, x_coords = np.ogrid[:h, :w]
             
-            # Calculate lighting for each pixel
-            lighting = np.ones((h, w), dtype=np.float32)
+            # Light source from top-left
+            light_x, light_y = w * 0.2, h * 0.2
             
-            for y in range(h):
-                for x in range(w):
-                    # Calculate distance from light source
-                    dist = np.sqrt((x - light_x)*2 + (y - light_y)*2)
-                    
-                    # Calculate lighting based on depth and distance
-                    depth_factor = depth_map[y, x]
-                    light_intensity = 1.0 - (dist / (w + h)) * 0.3
-                    
-                    # Material-specific lighting
-                    if material_type == "Fabric/Carpet":
-                        # Fabric scatters light softly
-                        lighting[y, x] = light_intensity * (0.8 + depth_factor * 0.4) * intensity
-                    elif material_type == "Metal":
-                        # Metal reflects light sharply
-                        lighting[y, x] = light_intensity * (0.6 + depth_factor * 0.8) * intensity
-                    else:
-                        # Default lighting
-                        lighting[y, x] = light_intensity * (0.7 + depth_factor * 0.5) * intensity
+            # Calculate distance-based lighting
+            dist_x = (x_coords - light_x) / w
+            dist_y = (y_coords - light_y) / h
             
-            # Apply lighting to image
+            # Create smooth lighting falloff
+            lighting = 1.0 - (dist_x**2 + dist_y**2) * 0.2 * intensity
+            lighting = np.clip(lighting, 0.7, 1.2)
+            
+            # Apply lighting while preserving color relationships
             lit_image = img_array.copy().astype(np.float32)
-            for i in range(3):
-                lit_image[:, :, i] *= lighting
+            
+            if preserve_colors:
+                # Apply lighting more subtly to preserve colors
+                for i in range(3):
+                    lit_image[:, :, i] = lit_image[:, :, i] * (0.9 + lighting * 0.1)
+            else:
+                for i in range(3):
+                    lit_image[:, :, i] = lit_image[:, :, i] * lighting
             
             return np.clip(lit_image, 0, 255).astype(np.uint8)
         
-        def create_realistic_image_advanced(pixel_img, target_width, target_height, material_type,
+        def create_realistic_image_improved(pixel_img, target_width, target_height, material_type,
                                           texture_intensity, super_resolution_mode, denoising_strength,
-                                          detail_enhancement, surface_roughness, depth_perception,
-                                          color_variation, pattern_recognition, color_depth_enhancement,
-                                          lighting_simulation, ambient_occlusion):
-            """Advanced AI-inspired conversion to realistic image"""
+                                          edge_preservation, surface_roughness, depth_perception,
+                                          lighting_intensity, pattern_recognition, color_preservation,
+                                          artifact_reduction, custom_palette=None):
+            """Improved AI-inspired conversion with better color preservation and artifact reduction"""
             
             try:
                 img_array = np.array(pixel_img)
                 
-                # Step 1: Analyze pixel art patterns
-                if pattern_recognition:
-                    analysis = analyze_pixel_patterns(img_array)
+                # Determine color palette to use
+                if custom_palette is not None:
+                    palette = np.array(custom_palette)
                 else:
-                    analysis = {'edges': None, 'dominant_colors': [], 'patterns': []}
+                    palette = extract_dominant_colors(pixel_img, n_colors=8)
                 
-                # Step 2: Advanced upscaling
-                upscaled = apply_neural_inspired_upscaling(
-                    img_array, (target_height, target_width), super_resolution_mode
+                # Step 1: Advanced upscaling with color preservation
+                upscaled = apply_color_preserving_upscaling(
+                    img_array, (target_height, target_width), palette, super_resolution_mode
                 )
                 
-                # Step 3: Create material texture
-                base_texture = create_material_texture(
-                    material_type, (target_height, target_width), texture_intensity
-                )
-                
-                # Step 4: Apply denoising
+                # Step 2: Apply denoising if needed (gentle)
                 if denoising_strength > 0:
-                    upscaled = cv2.bilateralFilter(upscaled, 
-                                                 min(15, int(9 * denoising_strength)), 
-                                                 int(75 * denoising_strength), 
-                                                 int(75 * denoising_strength))
-                
-                # Step 5: Create depth map for 3D effects
-                gray = cv2.cvtColor(upscaled, cv2.COLOR_RGB2GRAY)
-                depth_map = ndi.gaussian_filter(gray.astype(np.float32) / 255.0, 
-                                              sigma=max(1, depth_perception))
-                
-                # Step 6: Apply surface texture
-                textured_image = upscaled.copy().astype(np.float32)
-                
-                # Modulate each color channel with texture
-                for i in range(3):
-                    texture_effect = 1.0 + (base_texture - 0.5) * surface_roughness * 0.3
-                    textured_image[:, :, i] *= texture_effect
-                
-                # Step 7: Color variation for realism
-                if color_variation > 0:
-                    h, w = textured_image.shape[:2]
+                    # Use gentle denoising to avoid artifacts
+                    upscaled = cv2.bilateralFilter(upscaled, 5, 
+                                                 int(50 * denoising_strength), 
+                                                 int(50 * denoising_strength))
                     
-                    # Add subtle color variations
-                    for i in range(3):
-                        color_noise = np.random.normal(1.0, 0.05 * color_variation, (h, w))
-                        textured_image[:, :, i] *= color_noise
+                    # Re-quantize to palette after denoising
+                    if color_preservation:
+                        upscaled = quantize_to_palette(upscaled, palette)
                 
-                # Step 8: Apply lighting simulation
-                if lighting_simulation:
-                    textured_image = apply_material_lighting(
-                        textured_image.astype(np.uint8), 
-                        material_type, 
-                        depth_map, 
-                        intensity=1.0
-                    ).astype(np.float32)
-                
-                # Step 9: Ambient occlusion
-                if ambient_occlusion:
-                    # Create ambient occlusion map
-                    ao_map = 1.0 - ndi.gaussian_filter(depth_map, sigma=3) * 0.3
+                # Step 3: Create clean material texture
+                if surface_roughness > 0:
+                    base_texture = create_clean_material_texture(
+                        material_type, (target_height, target_width), 
+                        texture_intensity, artifact_reduction
+                    )
+                    
+                    # Apply texture more subtly
+                    textured_image = upscaled.copy().astype(np.float32)
                     
                     for i in range(3):
-                        textured_image[:, :, i] *= ao_map
-                
-                # Step 10: Detail enhancement
-                if detail_enhancement > 0:
-                    # Unsharp masking for detail enhancement
-                    blurred = cv2.GaussianBlur(textured_image, (0, 0), 2.0)
-                    textured_image = cv2.addWeighted(textured_image, 1.0 + detail_enhancement, 
-                                                   blurred, -detail_enhancement, 0)
-                
-                # Step 11: Advanced color depth enhancement
-                if color_depth_enhancement:
-                    # Enhance color depth using LAB color space
-                    lab = cv2.cvtColor(textured_image.astype(np.uint8), cv2.COLOR_RGB2LAB)
-                    l, a, b = cv2.split(lab)
+                        # Reduce texture effect to minimize artifacts
+                        texture_effect = 1.0 + (base_texture - 0.5) * surface_roughness * 0.2
+                        textured_image[:, :, i] *= texture_effect
                     
-                    # Enhance L channel with CLAHE
-                    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-                    l_enhanced = clahe.apply(l)
+                    upscaled = np.clip(textured_image, 0, 255).astype(np.uint8)
                     
-                    # Enhance color channels
-                    a_enhanced = cv2.addWeighted(a, 1.2, np.zeros_like(a), 0, 0)
-                    b_enhanced = cv2.addWeighted(b, 1.2, np.zeros_like(b), 0, 0)
+                    # Re-quantize if color preservation is enabled
+                    if color_preservation:
+                        upscaled = quantize_to_palette(upscaled, palette)
+                
+                # Step 4: Apply controlled lighting
+                if lighting_intensity > 0:
+                    upscaled = apply_controlled_lighting(upscaled, lighting_intensity, color_preservation)
+                
+                # Step 5: Edge enhancement if needed
+                if edge_preservation > 0:
+                    # Gentle edge enhancement
+                    gray = cv2.cvtColor(upscaled, cv2.COLOR_RGB2GRAY)
+                    edges = cv2.Canny(gray, 50, 150)
                     
-                    lab_enhanced = cv2.merge([l_enhanced, a_enhanced, b_enhanced])
-                    textured_image = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2RGB).astype(np.float32)
+                    # Apply edge enhancement subtly
+                    edges_colored = np.stack([edges] * 3, axis=2) / 255.0
+                    enhanced = upscaled * (1 + edges_colored * edge_preservation * 0.1)
+                    upscaled = np.clip(enhanced, 0, 255).astype(np.uint8)
                 
-                # Final processing
-                result = np.clip(textured_image, 0, 255).astype(np.uint8)
+                # Step 6: Final color quantization if preservation is enabled
+                if color_preservation:
+                    upscaled = quantize_to_palette(upscaled, palette)
                 
-                return Image.fromarray(result)
+                # Step 7: Final artifact reduction
+                if artifact_reduction:
+                    # Very gentle smoothing to reduce any remaining artifacts
+                    upscaled = cv2.medianBlur(upscaled, 3)
+                    
+                    # Re-quantize one final time
+                    if color_preservation:
+                        upscaled = quantize_to_palette(upscaled, palette)
+                
+                return Image.fromarray(upscaled)
                 
             except Exception as e:
-                st.error(f"Error during advanced processing: {str(e)}")
-                # Fallback to basic upscaling
-                return pixel_img.resize((target_width, target_height), Image.LANCZOS)
+                st.error(f"Error during processing: {str(e)}")
+                # Fallback to simple upscaling
+                return pixel_img.resize((target_width, target_height), Image.NEAREST)
         
         # Generate the realistic image
-        if st.button("🚀 Generate Realistic Image with AI", type="primary"):
-            with st.spinner("🔄 Converting pixel art to realistic image using advanced AI techniques... This may take a moment."):
+        if st.button("🚀 Generate Realistic Image", type="primary"):
+            with st.spinner("🔄 Converting pixel art to realistic image... This may take a moment."):
                 try:
-                    realistic_image = create_realistic_image_advanced(
+                    # Prepare custom palette if using custom colors
+                    final_custom_palette = None
+                    if use_custom_palette:
+                        final_custom_palette = custom_colors
+                    
+                    realistic_image = create_realistic_image_improved(
                         pixel_image, target_width, target_height, material_type,
                         texture_intensity, super_resolution_mode, denoising_strength,
-                        detail_enhancement, surface_roughness, depth_perception,
-                        color_variation, pattern_recognition, color_depth_enhancement,
-                        lighting_simulation, ambient_occlusion
+                        edge_preservation, surface_roughness, depth_perception,
+                        lighting_intensity, pattern_recognition, color_preservation,
+                        artifact_reduction, final_custom_palette
                     )
                     
                     # Store the result in session state
@@ -428,10 +447,12 @@ if uploaded_file is not None:
                     st.session_state.upscale_factor = upscale_factor
                     st.session_state.material_type = material_type
                     
+                    st.success("✅ Image generated successfully!")
+                    
                 except Exception as e:
                     st.error(f"Failed to process image: {str(e)}")
                     # Fallback
-                    st.session_state.realistic_image = pixel_image.resize((target_width, target_height), Image.LANCZOS)
+                    st.session_state.realistic_image = pixel_image.resize((target_width, target_height), Image.NEAREST)
         
         # Show realistic image if it exists in session state
         if hasattr(st.session_state, 'realistic_image') and st.session_state.realistic_image:
@@ -443,10 +464,20 @@ if uploaded_file is not None:
                     use_container_width=True
                 )
             
-            # Download section
-            st.subheader("💾 Download Realistic Image")
+            # Show final color palette used
+            st.subheader("🎨 Final Color Palette")
+            final_colors = extract_dominant_colors(st.session_state.realistic_image)
+            cols = st.columns(min(8, len(final_colors)))
             
-            col_d1, col_d2 = st.columns(2)
+            for i, color in enumerate(final_colors):
+                with cols[i % len(cols)]:
+                    color_hex = "#{:02x}{:02x}{:02x}".format(int(color[0]), int(color[1]), int(color[2]))
+                    st.color_picker(f"Final {i+1}", color_hex, key=f"final_{i}", disabled=True)
+            
+            # Download section
+            st.subheader("💾 Download Options")
+            
+            col_d1, col_d2, col_d3 = st.columns(3)
             
             with col_d1:
                 # Download PNG
@@ -469,6 +500,19 @@ if uploaded_file is not None:
                     file_name="realistic_image.jpg",
                     mime="image/jpeg"
                 )
+            
+            with col_d3:
+                # Download palette info
+                palette_info = "Color Palette Information:\n"
+                for i, color in enumerate(final_colors):
+                    palette_info += f"Color {i+1}: RGB({color[0]}, {color[1]}, {color[2]}) - #{color[0]:02x}{color[1]:02x}{color[2]:02x}\n"
+                
+                st.download_button(
+                    label="🗂 Download Palette Info",
+                    data=palette_info,
+                    file_name="color_palette.txt",
+                    mime="text/plain"
+                )
     
     except Exception as e:
         st.error(f"Error loading image: {str(e)}")
@@ -476,13 +520,23 @@ if uploaded_file is not None:
 else:
     st.info("⬆ Please upload a pixel art image to start the AI conversion!")
     
-    st.subheader("🚀 Advanced AI Features:")
+    st.subheader("🚀 Key Improvements:")
     st.markdown("""
-    - *Neural-Inspired Super Resolution*: Multi-scale upscaling with edge preservation
-    - *Material Simulation*: Realistic fabric, wood, stone, and metal textures
-    - *Smart Pattern Recognition*: AI analyzes your pixel art structure
-    - *3D Lighting Simulation*: Realistic lighting and shadow effects
-    - *Advanced Color Depth*: Enhanced color variations and depth perception
-    - *Ambient Occlusion*: Professional-grade shadow enhancement
-    - *Surface Roughness Control*: Fine-tune material surface properties
-    """)
+    - **🎨 Custom Color Palette**: Define your own color palette or use detected colors
+    - **🔧 Artifact Reduction**: Eliminates bubbles and unwanted visual artifacts  
+    - **🎯 Strict Color Preservation**: Maintains original color relationships
+    - **🔍 Smart Pattern Recognition**: Better analysis of pixel art structure
+    - **💡 Controlled Lighting**: Subtle lighting that doesn't destroy colors
+    - **📐 Clean Texture Generation**: Material textures without noise artifacts
+    - **🖼 Multiple Export Options**: PNG, JPEG, and color palette information
+    """)
+    
+    st.subheader("🎨 How to Use Custom Palettes:")
+    st.markdown("""
+    1. Upload your pixel art image
+    2. Check the "Original Colors" tab to see detected colors
+    3. Switch to "Custom Palette" tab if you want to modify colors
+    4. Enable "Use Custom Palette" and adjust the colors as needed
+    5. Configure material type and enhancement settings
+    6. Generate your realistic image with the custom palette
+    """)
