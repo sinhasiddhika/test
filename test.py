@@ -117,8 +117,8 @@ if uploaded_file is not None:
                 texture_intensity = st.slider(
                     "Texture Intensity",
                     min_value=0.1,
-                    max_value=3.0,
-                    value=1.8,  # Higher default for more realistic carpet texture
+                    max_value=2.0,
+                    value=1.2,  # Increased for more realistic carpet texture
                     step=0.1,
                     help="How pronounced the texture should be"
                 )
@@ -159,9 +159,9 @@ if uploaded_file is not None:
             with col_ai2:
                 st.markdown("🎯 Realism Controls:")
                 
-                surface_roughness = st.slider("Surface Roughness", 0.0, 1.0, 0.8, 0.1)  # Increased for carpet
-                depth_perception = st.slider("3D Depth Effect", 0.0, 1.5, 1.0, 0.1)  # Increased for carpet
-                lighting_intensity = st.slider("Lighting Intensity", 0.0, 2.0, 1.2, 0.1)  # Increased for carpet
+                surface_roughness = st.slider("Surface Roughness", 0.0, 1.0, 0.6, 0.1)  # Increased for carpet
+                depth_perception = st.slider("3D Depth Effect", 0.0, 1.5, 0.8, 0.1)  # Increased for carpet
+                lighting_intensity = st.slider("Lighting Intensity", 0.0, 2.0, 1.0, 0.1)  # Increased for carpet
         
         def quantize_to_palette(img_array, palette):
             """Quantize image colors to match the specified palette"""
@@ -179,157 +179,90 @@ if uploaded_file is not None:
             return quantized.reshape(h, w, c)
         
         def create_realistic_carpet_texture(size, intensity=1.0, reduce_artifacts=True):
-            """Generate photorealistic carpet texture with proper fiber simulation and weave patterns"""
+            """Generate realistic carpet texture with fiber-like appearance"""
             h, w = size
             
-            # Initialize base texture
-            base_texture = np.ones((h, w), dtype=np.float32)
-            height_map = np.zeros((h, w), dtype=np.float32)
+            # Create base texture with multiple layers for realism
+            texture = np.zeros((h, w), dtype=np.float32)
             
-            # === STEP 1: Create carpet weave/pile structure ===
-            # Simulate carpet pile with varying heights
-            pile_density = 2  # Fibers per unit
-            fiber_size = max(2, int(3 * intensity))
-            
-            # Create random fiber positions
-            np.random.seed(42)  # For consistent results
-            num_fibers = (h * w) // (fiber_size * fiber_size) * pile_density
-            
-            for _ in range(num_fibers):
-                # Random fiber position
-                fy = np.random.randint(0, h)
-                fx = np.random.randint(0, w)
+            # Layer 1: Fine fiber texture using multiple scales
+            for scale in [2, 4, 8, 16]:
+                # Create noise at different scales
+                noise_h = max(1, h // scale)
+                noise_w = max(1, w // scale)
                 
-                # Fiber height variation (carpet pile height)
-                fiber_height = np.random.normal(1.0, 0.2)
-                fiber_height = np.clip(fiber_height, 0.3, 1.7)
-                
-                # Create fiber footprint
-                y_start = max(0, fy - fiber_size//2)
-                y_end = min(h, fy + fiber_size//2 + 1)
-                x_start = max(0, fx - fiber_size//2)
-                x_end = min(w, fx + fiber_size//2 + 1)
-                
-                # Apply fiber with soft edges
-                for y in range(y_start, y_end):
-                    for x in range(x_start, x_end):
-                        # Distance from fiber center for soft falloff
-                        dist = np.sqrt((y - fy)**2 + (x - fx)**2)
-                        if dist <= fiber_size:
-                            falloff = max(0, 1 - dist / fiber_size)
-                            height_map[y, x] = max(height_map[y, x], fiber_height * falloff)
+                if noise_h > 0 and noise_w > 0:
+                    noise = np.random.normal(0, 0.1, (noise_h, noise_w))
+                    # Resize noise to full size
+                    noise_resized = cv2.resize(noise, (w, h), interpolation=cv2.INTER_LINEAR)
+                    # Add to texture with decreasing weight for finer scales
+                    weight = 1.0 / scale
+                    texture += noise_resized * weight * intensity
             
-            # === STEP 2: Add carpet backing pattern ===
-            # Simulate the backing weave visible between pile
-            backing_pattern = np.ones((h, w), dtype=np.float32) * 0.3
+            # Layer 2: Directional fiber pattern (carpet pile direction)
+            fiber_direction = np.random.choice([0, 45, 90, 135])  # Random fiber direction
             
-            # Create weave pattern
-            weave_spacing = max(4, int(6 * intensity))
-            for y in range(0, h, weave_spacing):
-                for x in range(0, w, weave_spacing):
-                    # Alternating weave pattern
-                    if (y//weave_spacing + x//weave_spacing) % 2 == 0:
-                        y_end = min(h, y + weave_spacing//2)
-                        x_end = min(w, x + weave_spacing//2)
-                        backing_pattern[y:y_end, x:x_end] = 0.4
+            if fiber_direction == 0:  # Horizontal fibers
+                for y in range(0, h, 3):
+                    if y < h:
+                        # Create slight variations in fiber height
+                        fiber_strength = 0.15 + np.random.normal(0, 0.05)
+                        texture[y:min(y+2, h), :] += fiber_strength * intensity
+                        
+            elif fiber_direction == 90:  # Vertical fibers
+                for x in range(0, w, 3):
+                    if x < w:
+                        fiber_strength = 0.15 + np.random.normal(0, 0.05)
+                        texture[:, x:min(x+2, w)] += fiber_strength * intensity
+                        
+            else:  # Diagonal fibers
+                # Create diagonal pattern
+                for i in range(0, max(h, w), 4):
+                    if fiber_direction == 45:
+                        # Diagonal top-left to bottom-right
+                        for j in range(min(h, w)):
+                            y, x = i + j, j
+                            if 0 <= y < h and 0 <= x < w:
+                                texture[y, x] += 0.1 * intensity
+                    else:  # 135 degrees
+                        # Diagonal top-right to bottom-left
+                        for j in range(min(h, w)):
+                            y, x = i + j, w - 1 - j
+                            if 0 <= y < h and 0 <= x < w:
+                                texture[y, x] += 0.1 * intensity
             
-            # Blend backing with pile height
-            carpet_structure = np.maximum(backing_pattern, height_map * 0.7)
+            # Layer 3: Carpet pile density variation
+            # Create areas of varying pile density
+            density_variation = np.random.normal(1.0, 0.1, (h//10, w//10))
+            density_variation = cv2.resize(density_variation, (w, h), interpolation=cv2.INTER_LINEAR)
+            texture *= density_variation
             
-            # === STEP 3: Add directional pile effect ===
-            # Real carpets have pile that leans in one direction
-            pile_direction = np.random.choice(['horizontal', 'vertical', 'diagonal'])
-            directional_effect = np.ones((h, w), dtype=np.float32)
-            
-            if pile_direction == 'horizontal':
-                # Create horizontal brushing effect
-                for y in range(h):
-                    wave = np.sin(y * 0.2) * 0.1 + 1.0
-                    directional_effect[y, :] = wave
-                    
-            elif pile_direction == 'vertical':
-                # Create vertical brushing effect
-                for x in range(w):
-                    wave = np.sin(x * 0.2) * 0.1 + 1.0
-                    directional_effect[:, x] = wave
-                    
-            else:  # diagonal
-                # Create diagonal brushing effect
-                for y in range(h):
-                    for x in range(w):
-                        wave = np.sin((x + y) * 0.15) * 0.08 + 1.0
-                        directional_effect[y, x] = wave
-            
-            # Apply directional effect
-            carpet_structure *= directional_effect
-            
-            # === STEP 4: Add fine fiber texture ===
-            # Simulate individual fiber variations
-            fiber_noise = np.random.normal(1.0, 0.05, (h//2, w//2))
-            fiber_noise = cv2.resize(fiber_noise, (w, h), interpolation=cv2.INTER_LINEAR)
-            carpet_structure *= fiber_noise
-            
-            # === STEP 5: Add realistic carpet imperfections ===
+            # Layer 4: Subtle wear patterns (optional)
             if not reduce_artifacts:
-                # Add subtle wear patterns
-                wear_centers = [(np.random.randint(h//4, 3*h//4), np.random.randint(w//4, 3*w//4)) 
-                               for _ in range(2)]
-                
-                for wy, wx in wear_centers:
-                    # Create circular wear pattern
-                    y_coords, x_coords = np.ogrid[:h, :w]
-                    wear_mask = (y_coords - wy)**2 + (x_coords - wx)**2
-                    wear_radius = min(h, w) // 8
-                    wear_effect = np.exp(-wear_mask / (2 * wear_radius**2))
-                    carpet_structure *= (1 - wear_effect * 0.2)
+                # Add subtle wear patterns that might occur in real carpet
+                wear_pattern = np.random.normal(0, 0.02, (h//20, w//20))
+                wear_pattern = cv2.resize(wear_pattern, (w, h), interpolation=cv2.INTER_LINEAR)
+                texture += wear_pattern * intensity
             
-            # === STEP 6: Add micro-detail fiber structure ===
-            # Create fine fiber detail at pixel level
-            micro_detail = np.random.normal(1.0, 0.02, (h, w))
-            
-            # Apply fiber orientation micro-structure
-            for y in range(1, h-1):
-                for x in range(1, w-1):
-                    # Check local pile height to determine fiber density
-                    local_height = carpet_structure[y, x]
-                    if local_height > 0.5:  # Areas with significant pile
-                        # Add micro-fiber detail
-                        fiber_detail = 1.0 + (micro_detail[y, x] - 1.0) * local_height
-                        carpet_structure[y, x] *= fiber_detail
-            
-            # === STEP 7: Smooth and normalize ===
+            # Apply smoothing to make texture more realistic
             if reduce_artifacts:
-                # Gentle smoothing to remove harsh transitions
-                carpet_structure = cv2.GaussianBlur(carpet_structure, (3, 3), 0.8)
-            
-            # Create shadow/lighting based on height map
-            # Simulate how light hits the carpet pile
-            shadow_map = np.zeros((h, w), dtype=np.float32)
-            for y in range(1, h-1):
-                for x in range(1, w-1):
-                    # Calculate local height gradient (normal vector)
-                    dx = carpet_structure[y, x+1] - carpet_structure[y, x-1]
-                    dy = carpet_structure[y+1, x] - carpet_structure[y-1, x]
-                    
-                    # Light direction (from top-left)
-                    light_x, light_y = -0.5, -0.7
-                    
-                    # Calculate how much light hits this point
-                    dot_product = dx * light_x + dy * light_y
-                    shadow_map[y, x] = 0.3 + 0.7 * max(0, dot_product + 0.5)
-            
-            # Combine structure with lighting
-            final_texture = carpet_structure * (0.7 + shadow_map * 0.3)
-            
-            # Normalize to proper range
-            if final_texture.max() > final_texture.min():
-                final_texture = (final_texture - final_texture.min()) / (final_texture.max() - final_texture.min())
-                # Map to realistic carpet texture range
-                final_texture = final_texture * 0.6 + 0.7  # Range from 0.7 to 1.3
+                # Use bilateral filter to smooth while preserving structure
+                texture_8bit = ((texture - texture.min()) / (texture.max() - texture.min()) * 255).astype(np.uint8)
+                texture_smooth = cv2.bilateralFilter(texture_8bit, 5, 50, 50)
+                texture = texture_smooth.astype(np.float32) / 255.0
             else:
-                final_texture = np.ones_like(final_texture)
+                # Light Gaussian blur
+                texture = cv2.GaussianBlur(texture, (3, 3), 1.0)
             
-            return final_texture
+            # Normalize texture to reasonable range
+            if texture.max() > texture.min():
+                texture = (texture - texture.min()) / (texture.max() - texture.min())
+                # Adjust range to be more subtle
+                texture = texture * 0.4 + 0.8  # Range from 0.8 to 1.2
+            else:
+                texture = np.ones_like(texture)
+            
+            return texture
         
         def create_clean_material_texture(material_type, size, intensity=1.0, reduce_artifacts=True):
             """Generate clean material-specific texture patterns without artifacts"""
@@ -390,15 +323,11 @@ if uploaded_file is not None:
             target_h, target_w = target_size
             
             if method == "Color-Preserving":
-                # For carpet, use higher quality upscaling to preserve texture detail
-                # First, upscale with Lanczos for better quality
-                upscaled_lanczos = cv2.resize(img_array, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+                # Use bicubic interpolation for smoother upscaling
+                upscaled = cv2.resize(img_array, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
                 
-                # Apply edge-preserving smoothing to reduce pixelation
-                upscaled_smooth = cv2.edgePreservingFilter(upscaled_lanczos, flags=2, sigma_s=50, sigma_r=0.4)
-                
-                # Blend the two for optimal results
-                upscaled = cv2.addWeighted(upscaled_lanczos, 0.7, upscaled_smooth, 0.3, 0)
+                # Apply bilateral filter to smooth pixelated edges while preserving color boundaries
+                upscaled = cv2.bilateralFilter(upscaled, 9, 80, 80)
                 
                 # Quantize back to original palette
                 result = quantize_to_palette(upscaled.astype(np.uint8), palette)
@@ -406,14 +335,14 @@ if uploaded_file is not None:
                 return result.astype(np.uint8)
             
             elif method == "Pattern-Aware":
-                # Enhanced pattern-aware upscaling for textiles
-                upscaled = cv2.resize(img_array, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+                # Analyze pattern structure first
+                upscaled = cv2.resize(img_array, (target_w, target_h), interpolation=cv2.INTER_CUBIC)
                 
-                # Apply non-local means denoising while preserving patterns
-                upscaled = cv2.fastNlMeansDenoisingColored(upscaled, None, 3, 3, 7, 21)
+                # Apply bilateral filter to smooth while preserving edges
+                smoothed = cv2.bilateralFilter(upscaled, 9, 75, 75)
                 
                 # Quantize to palette
-                result = quantize_to_palette(upscaled, palette)
+                result = quantize_to_palette(smoothed, palette)
                 
                 return result.astype(np.uint8)
             
@@ -441,7 +370,7 @@ if uploaded_file is not None:
             dist_y = (y_coords - light_y) / h
             
             # Create smooth lighting falloff
-            lighting = 1.0 - (dist_x**2 + dist_y**2) * 0.2 * intensity
+            lighting = 1.0 - (dist_x*2 + dist_y*2) * 0.2 * intensity
             lighting = np.clip(lighting, 0.7, 1.2)
             
             # Apply lighting while preserving color relationships
@@ -500,44 +429,16 @@ if uploaded_file is not None:
                     textured_image = upscaled.copy().astype(np.float32)
                     
                     if material_type == "Fabric/Carpet":
-                        # Advanced carpet texture application
-                        
-                        # Create color variation based on pile height
-                        pile_height_map = base_texture.copy()
-                        
-                        # Apply realistic carpet shading
+                        # For carpet, apply texture as a multiplicative factor
                         for i in range(3):
-                            # Base texture application
                             textured_image[:, :, i] *= base_texture
-                            
-                            # Add pile shadow effect - darker in valleys, lighter on peaks
-                            shadow_factor = (pile_height_map - 1.0) * 0.3
-                            textured_image[:, :, i] += shadow_factor * textured_image[:, :, i]
-                            
-                            # Add subtle color variation that real carpets have
-                            color_variation = (pile_height_map - 1.0) * 0.1
-                            textured_image[:, :, i] *= (1.0 + color_variation)
                         
-                        # Add realistic depth perception
+                        # Add subtle depth variation
                         if depth_perception > 0:
-                            # Create depth map based on pile structure
-                            depth_map = cv2.GaussianBlur(pile_height_map, (7, 7), 2)
-                            
-                            # Apply depth as brightness variation
-                            depth_effect = (depth_map - 1.0) * depth_perception * 15
-                            
+                            depth_map = cv2.GaussianBlur(base_texture, (15, 15), 5)
+                            depth_effect = (depth_map - 0.5) * depth_perception * 10
                             for i in range(3):
                                 textured_image[:, :, i] += depth_effect
-                        
-                        # Add fiber specular highlights (carpet sheen)
-                        if lighting_intensity > 0.5:
-                            # Create specular map based on pile orientation
-                            specular_map = np.maximum(0, pile_height_map - 1.1) * 2
-                            specular_map = cv2.GaussianBlur(specular_map, (3, 3), 1)
-                            
-                            # Apply subtle specular highlights
-                            for i in range(3):
-                                textured_image[:, :, i] += specular_map * 20 * (lighting_intensity - 0.5)
                     else:
                         # For other materials, use the original method
                         for i in range(3):
@@ -684,14 +585,14 @@ else:
     
     st.subheader("🚀 Key Improvements:")
     st.markdown("""
-    - **🎨 Custom Color Palette**: Define your own color palette or use detected colors
-    - **🔧 Artifact Reduction**: Eliminates bubbles and unwanted visual artifacts  
-    - **🎯 Strict Color Preservation**: Maintains original color relationships
-    - **🔍 Smart Pattern Recognition**: Better analysis of pixel art structure
-    - **💡 Controlled Lighting**: Subtle lighting that doesn't destroy colors
-    - **📐 Clean Texture Generation**: Material textures without noise artifacts
-    - **🖼 Multiple Export Options**: PNG, JPEG, and color palette information
-    - **🧶 Realistic Carpet Texture**: Multi-layered fiber simulation with pile direction
+    - *🎨 Custom Color Palette*: Define your own color palette or use detected colors
+    - *🔧 Artifact Reduction*: Eliminates bubbles and unwanted visual artifacts  
+    - *🎯 Strict Color Preservation*: Maintains original color relationships
+    - *🔍 Smart Pattern Recognition*: Better analysis of pixel art structure
+    - *💡 Controlled Lighting*: Subtle lighting that doesn't destroy colors
+    - *📐 Clean Texture Generation*: Material textures without noise artifacts
+    - *🖼 Multiple Export Options*: PNG, JPEG, and color palette information
+    - *🧶 Realistic Carpet Texture*: Multi-layered fiber simulation with pile direction
     """)
     
     st.subheader("🎨 How to Use Custom Palettes:")
@@ -702,4 +603,4 @@ else:
     4. Enable "Use Custom Palette" and adjust the colors as needed
     5. Configure material type and enhancement settings
     6. Generate your realistic image with the custom palette
-    """)
+    """)
